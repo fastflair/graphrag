@@ -24,9 +24,3 @@ def write_text(path: Path, content: str) -> None:
     """Persist plain text content using UTF-8 encoding."""
 
     path.write_text(content, encoding="utf-8")
-
-
-def read_json(path: Path) -> Any:
-    """Load a JSON payload from disk using UTF-8 encoding."""
-
-    return json.loads(path.read_text(encoding="utf-8"))

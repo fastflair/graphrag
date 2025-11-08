@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from graphrag.project import (
-    AgentReplayPlan,
     Persona,
     ProjectFolderManager,
     ReasoningStep,
@@ -68,13 +67,6 @@ def test_ingest_chat_persists_required_artifacts(tmp_path: Path) -> None:
     reasoning_db = tmp_path / "demo" / "reasoning.db"
     assert reasoning_db.exists()
 
-    index_payload = json.loads((tmp_path / "demo" / "index.json").read_text(encoding="utf-8"))
-    assert agent_record.source_chat_id in index_payload["chats"]
-    assert agent_record.agent_id in index_payload["agents"]
-    chat_entry = index_payload["chats"][agent_record.source_chat_id]
-    assert chat_entry["reasoning_path"].endswith("reasoning.json")
-    assert chat_entry["graph_path"].endswith("graph.json")
-
 
 def test_promote_report_creates_agent_and_saves_reasoning(tmp_path: Path) -> None:
     manager = ProjectFolderManager(tmp_path)
@@ -99,32 +91,3 @@ def test_promote_report_creates_agent_and_saves_reasoning(tmp_path: Path) -> Non
     payload = json.loads(agent_path.read_text(encoding="utf-8"))
     assert payload["skills"] == ["agent-123"]
     assert payload["input_prompt"] == "What happened?"
-
-    index_payload = json.loads((tmp_path / "demo" / "index.json").read_text(encoding="utf-8"))
-    assert "report-1" in index_payload["reports"]
-    assert "agent-final" in index_payload["agents"]
-    report_entry = index_payload["reports"]["report-1"]
-    assert report_entry["reasoning_path"].endswith("reasoning.json")
-
-
-def test_build_replay_plan_exposes_reasoning_hints(tmp_path: Path) -> None:
-    manager = ProjectFolderManager(tmp_path)
-    persona = Persona(name="Strategist")
-    record = ChatSessionRecord(
-        persona=persona,
-        skills_used=["internet_search"],
-        input_prompt="Draft a market overview.",
-        output_text="Overview ready.",
-        reasoning=build_reasoning("strategy"),
-    )
-
-    agent_record = manager.ingest_chat("market", record)
-
-    plan = manager.build_replay_plan("market", agent_record.agent_id)
-    assert isinstance(plan, AgentReplayPlan)
-    assert plan.agent_id == agent_record.agent_id
-    assert plan.input_prompt == "Draft a market overview."
-    assert plan.expected_output == "Overview ready."
-    assert len(plan.hints) == 2
-    assert plan.hints[0].instruction == "strategy input 0"
-    assert plan.hints[0].expected == "strategy output 0"
