@@ -1,0 +1,1 @@
+"""Stub OpenAI types package."""
