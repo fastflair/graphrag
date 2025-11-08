@@ -25,6 +25,16 @@ The GraphRAG project is a data pipeline and transformation suite that is designe
 
 To learn more about GraphRAG and how it can be used to enhance your LLM's ability to reason about your private data, please visit the <a href="https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/" target="_blank">Microsoft Research Blog Post.</a>
 
+## Making Tacit Knowledge Explicit
+
+The repository now includes a lightweight project workspace that automatically preserves everything needed to recreate important agent conversations and downstream reports.
+
+1. Use `ProjectFolderManager` to create a project root. Each project receives deterministic folders for chats, derived agents, approved reports, and a SQLite reasoning log.
+2. When you ingest a chat, the manager snapshots the persona, skills, input, output, intermediate reasoning steps, and optional graph snapshot. A companion `AgentProcessRecord` is written alongside a replay plan (`.plan.json` and `.plan.md`) that describes how to reproduce the outcome step-by-step.
+3. When a report is promoted, the same replay artefacts are captured so a future agent can follow the recorded workflow hints to regenerate the analysis.
+
+Every project also maintains an index (`index.json`) that points to the raw prompts, outputs, reasoning traces, and replay plans. By pairing the preserved intermediate thinking with human-readable run books, teams can review, audit, and rebuild successful interactions even as underlying model parameters evolve. This process transforms ephemeral problem solving into durable, transferable knowledge that can bootstrap new agents or help collaborators understand how decisions were made.
+
 ## Quickstart
 
 To get started with the GraphRAG system we recommend trying the [command line quickstart](https://microsoft.github.io/graphrag/get_started/).
