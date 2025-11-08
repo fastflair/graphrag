@@ -6,12 +6,11 @@ import json
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from uuid import uuid4
 
 from .models import (
     AgentProcessRecord,
-    AgentReplayPlan,
     ChatSessionRecord,
     Persona,
     ReasoningStep,
@@ -19,7 +18,7 @@ from .models import (
     iter_reasoning_steps,
 )
 from .reasoning_store import ReasoningStore
-from .storage import ensure_directory, read_json, write_json, write_text
+from .storage import ensure_directory, write_json, write_text
 
 
 class ProjectFolderManager:
@@ -47,16 +46,6 @@ class ProjectFolderManager:
                     "created_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
                 },
             )
-        index_path = project_path / "index.json"
-        if not index_path.exists():
-            write_json(
-                index_path,
-                {
-                    "chats": {},
-                    "agents": {},
-                    "reports": {},
-                },
-            )
         return project_path
 
     def ingest_chat(self, project_name: str, record: ChatSessionRecord) -> AgentProcessRecord:
@@ -77,24 +66,6 @@ class ProjectFolderManager:
         reasoning_store = ReasoningStore(project_path / "reasoning.db")
         reasoning_store.initialise()
         reasoning_store.append("chat", chat_identifier, canonical_record.reasoning)
-
-        chat_index_payload: Dict[str, Any] = {
-            "persona": canonical_record.persona.to_dict(),
-            "skills_used": list(canonical_record.skills_used),
-            "created_at": canonical_record.created_at.isoformat() + "Z",
-            "input_path": str((Path("chats") / chat_identifier / "input.txt").as_posix()),
-            "output_path": str((Path("chats") / chat_identifier / "output.txt").as_posix()),
-        }
-        if canonical_record.reasoning:
-            chat_index_payload["reasoning_path"] = str(
-                (Path("chats") / chat_identifier / "reasoning.json").as_posix()
-            )
-        if canonical_record.graph_snapshot:
-            chat_index_payload["graph_path"] = str(
-                (Path("chats") / chat_identifier / "graph.json").as_posix()
-            )
-
-        self._update_index(project_path, "chats", chat_identifier, chat_index_payload)
 
         agent_record = AgentProcessRecord(
             agent_id=f"agent-{chat_identifier}",
@@ -131,20 +102,6 @@ class ProjectFolderManager:
         reasoning_store.initialise()
         reasoning_store.append("report", report.report_id, report.reasoning)
 
-        report_index_payload: Dict[str, Any] = {
-            "persona": report.persona.to_dict(),
-            "question": report.question,
-            "referenced_agents": list(report.referenced_agent_ids),
-            "created_at": report.created_at.isoformat() + "Z",
-            "output_path": str((Path("reports") / report.report_id / "output.txt").as_posix()),
-        }
-        if report.reasoning:
-            report_index_payload["reasoning_path"] = str(
-                (Path("reports") / report.report_id / "reasoning.json").as_posix()
-            )
-
-        self._update_index(project_path, "reports", report.report_id, report_index_payload)
-
         agent_identifier = new_agent_id or f"agent-report-{report.report_id}"
         agent_record = AgentProcessRecord(
             agent_id=agent_identifier,
@@ -164,162 +121,40 @@ class ProjectFolderManager:
         agents_dir = project_path / "agents"
         records: List[AgentProcessRecord] = []
         for path in sorted(agents_dir.glob("*.json")):
-            data = read_json(path)
-            records.append(self._deserialize_agent_record(data))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            records.append(
+                AgentProcessRecord(
+                    agent_id=data["agent_id"],
+                    source_chat_id=data["source_chat_id"],
+                    persona=Persona(
+                        name=data["persona"]["name"],
+                        description=data["persona"].get("description"),
+                        metadata=data["persona"].get("metadata", {}),
+                    ),
+                    skills=list(data.get("skills", [])),
+                    workflow=[
+                        ReasoningStep(
+                            name=step["name"],
+                            input_text=step["input_text"],
+                            output_text=step["output_text"],
+                            tool=step.get("tool"),
+                            metadata=step.get("metadata", {}),
+                        )
+                        for step in data.get("workflow", [])
+                    ],
+                    input_prompt=data["input_prompt"],
+                    expected_output=data["expected_output"],
+                    graph_snapshot=data.get("graph_snapshot", {}),
+                )
+            )
         return records
-
-    def load_agent(self, project_name: str, agent_id: str) -> AgentProcessRecord:
-        project_path = self.create_project(project_name)
-        agent_path = project_path / "agents" / f"{agent_id}.json"
-        data = read_json(agent_path)
-        return self._deserialize_agent_record(data)
-
-    def build_replay_plan(self, project_name: str, agent_id: str) -> AgentReplayPlan:
-        try:
-            return self.load_agent_plan(project_name, agent_id)
-        except FileNotFoundError:
-            agent_record = self.load_agent(project_name, agent_id)
-            plan = AgentReplayPlan.from_agent(agent_record)
-            project_path = self.create_project(project_name)
-            self._persist_agent_plan(project_path, plan)
-            return plan
-
-    def load_agent_plan(self, project_name: str, agent_id: str) -> AgentReplayPlan:
-        project_path = self.create_project(project_name)
-        plan_path = project_path / "agents" / f"{agent_id}.plan.json"
-        payload = read_json(plan_path)
-        return AgentReplayPlan.from_dict(payload)
 
     def _persist_agent_record(self, project_path: Path, record: AgentProcessRecord) -> None:
         agents_dir = ensure_directory(project_path / "agents")
         write_json(agents_dir / f"{record.agent_id}.json", record.to_dict())
-        plan = AgentReplayPlan.from_agent(record)
-        self._persist_agent_plan(project_path, plan)
-        self._update_index(
-            project_path,
-            "agents",
-            record.agent_id,
-            {
-                "source_chat_id": record.source_chat_id,
-                "persona": record.persona.to_dict(),
-                "skills": list(record.skills),
-                "created_at": record.created_at.isoformat() + "Z",
-                "plan_path": str((Path("agents") / f"{record.agent_id}.plan.json").as_posix()),
-                "plan_markdown_path": str(
-                    (Path("agents") / f"{record.agent_id}.plan.md").as_posix()
-                ),
-            },
-        )
-
-    def _persist_agent_plan(self, project_path: Path, plan: AgentReplayPlan) -> None:
-        agents_dir = ensure_directory(project_path / "agents")
-        plan_json_path = agents_dir / f"{plan.agent_id}.plan.json"
-        plan_markdown_path = agents_dir / f"{plan.agent_id}.plan.md"
-        write_json(plan_json_path, plan.to_dict())
-        write_text(plan_markdown_path, self._build_plan_markdown(plan))
 
     def _build_chat_identifier(self, record: ChatSessionRecord) -> str:
         timestamp = record.created_at.isoformat().replace(":", "").replace("-", "")
         random_suffix = uuid4().hex[:6]
         persona_slug = record.persona.name.lower().replace(" ", "-")
         return f"{timestamp}-{persona_slug}-{random_suffix}"
-
-    def _build_plan_markdown(self, plan: AgentReplayPlan) -> str:
-        lines: List[str] = [f"# Agent Replay Plan: {plan.agent_id}", ""]
-
-        lines.append("## Persona")
-        lines.append(f"- Name: {plan.persona.name}")
-        if plan.persona.description:
-            lines.append(f"- Description: {plan.persona.description}")
-        if plan.persona.metadata:
-            lines.append("- Metadata:")
-            metadata_json = json.dumps(plan.persona.metadata, indent=2, ensure_ascii=False)
-            lines.append("  ```json")
-            for line in metadata_json.splitlines():
-                lines.append(f"  {line}")
-            lines.append("  ```")
-
-        lines.extend(["", "## Input Prompt", "", plan.input_prompt, ""])
-        lines.extend(["## Expected Output", "", plan.expected_output, ""])
-
-        lines.append("## Skills")
-        if plan.skills:
-            for skill in plan.skills:
-                lines.append(f"- {skill}")
-        else:
-            lines.append("- _No skills recorded_")
-
-        if plan.graph_snapshot:
-            lines.extend(["", "## Graph Snapshot", "", "```json"])
-            snapshot_json = json.dumps(plan.graph_snapshot, indent=2, ensure_ascii=False)
-            lines.extend(snapshot_json.splitlines())
-            lines.append("```")
-
-        lines.extend(["", "## Workflow Hints"])
-        if not plan.hints:
-            lines.append("- _No reasoning steps captured_")
-        else:
-            for hint in plan.hints:
-                lines.append("")
-                lines.append(f"### Step {hint.index}: {hint.name}")
-                lines.append("")
-                lines.append("**Instruction**")
-                lines.append("")
-                lines.append(hint.instruction)
-                lines.append("")
-                lines.append("**Expected Outcome**")
-                lines.append("")
-                lines.append(hint.expected)
-                if hint.tool:
-                    lines.extend(["", f"**Tool**: `{hint.tool}`"])
-                if hint.metadata:
-                    lines.extend(["", "**Metadata**", "", "```json"])
-                    metadata_json = json.dumps(hint.metadata, indent=2, ensure_ascii=False)
-                    lines.extend(metadata_json.splitlines())
-                    lines.append("```")
-
-        content = "\n".join(lines).strip()
-        return f"{content}\n"
-
-    def _update_index(
-        self,
-        project_path: Path,
-        section: str,
-        identifier: str,
-        payload: Dict[str, Any],
-    ) -> None:
-        index_path = project_path / "index.json"
-        if index_path.exists():
-            index_data = read_json(index_path)
-        else:
-            index_data = {"chats": {}, "agents": {}, "reports": {}}
-        section_payload = index_data.setdefault(section, {})
-        section_payload[identifier] = payload
-        write_json(index_path, index_data)
-
-    def _deserialize_agent_record(self, data: Dict[str, Any]) -> AgentProcessRecord:
-        persona = Persona.from_dict(data["persona"])
-        workflow = [ReasoningStep.from_dict(step) for step in data.get("workflow", [])]
-        created_at_value = data.get("created_at")
-        created_at = None
-        if isinstance(created_at_value, str):
-            created_at = self._parse_timestamp(created_at_value)
-
-        record_kwargs = {
-            "agent_id": data["agent_id"],
-            "source_chat_id": data["source_chat_id"],
-            "persona": persona,
-            "skills": list(data.get("skills", [])),
-            "workflow": workflow,
-            "input_prompt": data["input_prompt"],
-            "expected_output": data["expected_output"],
-            "graph_snapshot": data.get("graph_snapshot", {}),
-        }
-        if created_at is not None:
-            record_kwargs["created_at"] = created_at
-        return AgentProcessRecord(**record_kwargs)
-
-    def _parse_timestamp(self, value: str) -> datetime:
-        if value.endswith("Z"):
-            value = value[:-1]
-        return datetime.fromisoformat(value)

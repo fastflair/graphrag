@@ -31,14 +31,6 @@ class Persona:
         }
         return {key: value for key, value in data.items() if value not in (None, {})}
 
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "Persona":
-        return cls(
-            name=payload["name"],
-            description=payload.get("description"),
-            metadata=dict(payload.get("metadata", {})),
-        )
-
 
 @dataclass(slots=True)
 class ReasoningStep:
@@ -59,16 +51,6 @@ class ReasoningStep:
             "metadata": _serialize_metadata(self.metadata),
         }
         return {key: value for key, value in data.items() if value not in (None, {})}
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "ReasoningStep":
-        return cls(
-            name=payload["name"],
-            input_text=payload["input_text"],
-            output_text=payload["output_text"],
-            tool=payload.get("tool"),
-            metadata=dict(payload.get("metadata", {})),
-        )
 
 
 @dataclass(slots=True)
@@ -147,101 +129,6 @@ class ReportSynthesisRecord:
             "referenced_agent_ids": list(self.referenced_agent_ids),
             "reasoning": [step.to_dict() for step in self.reasoning],
         }
-
-
-@dataclass(slots=True)
-class WorkflowHint:
-    """A structured hint derived from a reasoning step for replay guidance."""
-
-    index: int
-    name: str
-    instruction: str
-    expected: str
-    tool: str | None = None
-    metadata: MutableMapping[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        data = {
-            "index": self.index,
-            "name": self.name,
-            "instruction": self.instruction,
-            "expected": self.expected,
-            "tool": self.tool,
-            "metadata": _serialize_metadata(self.metadata),
-        }
-        return {key: value for key, value in data.items() if value not in (None, {})}
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "WorkflowHint":
-        return cls(
-            index=payload["index"],
-            name=payload["name"],
-            instruction=payload["instruction"],
-            expected=payload["expected"],
-            tool=payload.get("tool"),
-            metadata=dict(payload.get("metadata", {})),
-        )
-
-
-@dataclass(slots=True)
-class AgentReplayPlan:
-    """Provides explicit instructions for recreating an archived agent run."""
-
-    agent_id: str
-    persona: Persona
-    input_prompt: str
-    expected_output: str
-    skills: List[str]
-    hints: List[WorkflowHint]
-    graph_snapshot: MutableMapping[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "agent_id": self.agent_id,
-            "persona": self.persona.to_dict(),
-            "input_prompt": self.input_prompt,
-            "expected_output": self.expected_output,
-            "skills": list(self.skills),
-            "hints": [hint.to_dict() for hint in self.hints],
-            "graph_snapshot": _serialize_metadata(self.graph_snapshot),
-        }
-
-    @classmethod
-    def from_agent(cls, agent: "AgentProcessRecord") -> "AgentReplayPlan":
-        hints = [
-            WorkflowHint(
-                index=index,
-                name=step.name,
-                instruction=step.input_text,
-                expected=step.output_text,
-                tool=step.tool,
-                metadata=dict(step.metadata),
-            )
-            for index, step in enumerate(agent.workflow, start=1)
-        ]
-        return cls(
-            agent_id=agent.agent_id,
-            persona=agent.persona,
-            input_prompt=agent.input_prompt,
-            expected_output=agent.expected_output,
-            skills=list(agent.skills),
-            hints=hints,
-            graph_snapshot=agent.graph_snapshot,
-        )
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "AgentReplayPlan":
-        persona = Persona.from_dict(payload["persona"])
-        hints = [WorkflowHint.from_dict(item) for item in payload.get("hints", [])]
-        return cls(
-            agent_id=payload["agent_id"],
-            persona=persona,
-            input_prompt=payload["input_prompt"],
-            expected_output=payload["expected_output"],
-            skills=list(payload.get("skills", [])),
-            hints=hints,
-            graph_snapshot=dict(payload.get("graph_snapshot", {})),
-        )
 
 
 def as_serializable_dict(data: Any) -> Dict[str, Any]:

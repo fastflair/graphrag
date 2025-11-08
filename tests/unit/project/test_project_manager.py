@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from graphrag.project import (
-    AgentReplayPlan,
     Persona,
     ProjectFolderManager,
     ReasoningStep,
@@ -60,36 +59,13 @@ def test_ingest_chat_persists_required_artifacts(tmp_path: Path) -> None:
     assert len(reasoning_payload) == 2
     assert reasoning_payload[0]["name"].startswith("chat-step")
 
-    agents_dir = tmp_path / "demo" / "agents"
-    agent_path = agents_dir / f"{agent_record.agent_id}.json"
+    agent_path = tmp_path / "demo" / "agents" / f"{agent_record.agent_id}.json"
     assert agent_path.exists()
     agent_payload = json.loads(agent_path.read_text(encoding="utf-8"))
     assert agent_payload["expected_output"] == "Sales increased."
 
-    plan_path = agents_dir / f"{agent_record.agent_id}.plan.json"
-    assert plan_path.exists()
-    plan_payload = json.loads(plan_path.read_text(encoding="utf-8"))
-    assert plan_payload["input_prompt"] == "Show quarterly sales."
-    assert plan_payload["hints"][0]["instruction"] == "chat input 0"
-
-    plan_markdown_path = agents_dir / f"{agent_record.agent_id}.plan.md"
-    assert plan_markdown_path.exists()
-    plan_markdown = plan_markdown_path.read_text(encoding="utf-8")
-    assert "## Workflow Hints" in plan_markdown
-    assert "chat input 0" in plan_markdown
-
     reasoning_db = tmp_path / "demo" / "reasoning.db"
     assert reasoning_db.exists()
-
-    index_payload = json.loads((tmp_path / "demo" / "index.json").read_text(encoding="utf-8"))
-    assert agent_record.source_chat_id in index_payload["chats"]
-    assert agent_record.agent_id in index_payload["agents"]
-    chat_entry = index_payload["chats"][agent_record.source_chat_id]
-    assert chat_entry["reasoning_path"].endswith("reasoning.json")
-    assert chat_entry["graph_path"].endswith("graph.json")
-    agent_entry = index_payload["agents"][agent_record.agent_id]
-    assert agent_entry["plan_path"].endswith("plan.json")
-    assert agent_entry["plan_markdown_path"].endswith("plan.md")
 
 
 def test_promote_report_creates_agent_and_saves_reasoning(tmp_path: Path) -> None:
@@ -110,55 +86,8 @@ def test_promote_report_creates_agent_and_saves_reasoning(tmp_path: Path) -> Non
     assert report_dir.is_dir()
     assert (report_dir / "output.txt").read_text(encoding="utf-8") == "A summary."
 
-    agents_dir = tmp_path / "demo" / "agents"
-    agent_path = agents_dir / "agent-final.json"
+    agent_path = tmp_path / "demo" / "agents" / "agent-final.json"
     assert agent_path.exists()
     payload = json.loads(agent_path.read_text(encoding="utf-8"))
     assert payload["skills"] == ["agent-123"]
     assert payload["input_prompt"] == "What happened?"
-
-    plan_json_path = agents_dir / "agent-final.plan.json"
-    assert plan_json_path.exists()
-    plan_payload = json.loads(plan_json_path.read_text(encoding="utf-8"))
-    assert plan_payload["expected_output"] == "A summary."
-
-    plan_markdown_path = agents_dir / "agent-final.plan.md"
-    assert plan_markdown_path.exists()
-    assert "## Persona" in plan_markdown_path.read_text(encoding="utf-8")
-
-    index_payload = json.loads((tmp_path / "demo" / "index.json").read_text(encoding="utf-8"))
-    assert "report-1" in index_payload["reports"]
-    assert "agent-final" in index_payload["agents"]
-    report_entry = index_payload["reports"]["report-1"]
-    assert report_entry["reasoning_path"].endswith("reasoning.json")
-    agent_entry = index_payload["agents"]["agent-final"]
-    assert agent_entry["plan_path"].endswith("plan.json")
-
-
-def test_build_replay_plan_exposes_reasoning_hints(tmp_path: Path) -> None:
-    manager = ProjectFolderManager(tmp_path)
-    persona = Persona(name="Strategist")
-    record = ChatSessionRecord(
-        persona=persona,
-        skills_used=["internet_search"],
-        input_prompt="Draft a market overview.",
-        output_text="Overview ready.",
-        reasoning=build_reasoning("strategy"),
-    )
-
-    agent_record = manager.ingest_chat("market", record)
-
-    plan = manager.build_replay_plan("market", agent_record.agent_id)
-    assert isinstance(plan, AgentReplayPlan)
-    assert plan.agent_id == agent_record.agent_id
-    assert plan.input_prompt == "Draft a market overview."
-    assert plan.expected_output == "Overview ready."
-    assert len(plan.hints) == 2
-    assert plan.hints[0].instruction == "strategy input 0"
-    assert plan.hints[0].expected == "strategy output 0"
-
-    persisted_plan = manager.load_agent_plan("market", agent_record.agent_id)
-    assert persisted_plan.hints[1].instruction == "strategy input 1"
-
-    plan_markdown_path = tmp_path / "market" / "agents" / f"{agent_record.agent_id}.plan.md"
-    assert plan_markdown_path.read_text(encoding="utf-8").startswith("# Agent Replay Plan")
